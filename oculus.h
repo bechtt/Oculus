@@ -32,7 +32,7 @@ module oculus
 
   REAL, parameter :: goldenmean    =          1.618033988749895 ! golden mean = ( one + sqrt(five) ) / two ;
 
-  REAL, parameter :: small         =       1.0e-13 ! this should really be machine precision; 25 Mar 15;
+  REAL, parameter :: small         =       1.0e-15 ! this is near the lsode machine precision limit
 
   REAL, parameter :: half          =       one / two
   REAL, parameter :: third         =       one / three
@@ -43,7 +43,7 @@ module oculus
 ! structures; 25 Mar 15;
   
   type biotsavart
-     LOGICAL              :: LB=.false., LA=.false., LL=.false.
+     LOGICAL              :: LB, LA, LL
      INTEGER              :: N, ixyz, ifail
      REAL                 :: tol, x, y, z, Bx, By, Bz, Ax, Ay, Az, length
   end type biotsavart
@@ -53,7 +53,7 @@ module oculus
   
   type magneticaxis
      INTEGER              :: Nfp, Ntor, maxits, its, Lallocated, nbfield(0:1)
-     REAL                 :: R, Z, odetol, tol, error, residue, iota, rzf(0:2,0:31)
+     REAL                 :: R, Z, phi, odetol, tol, error, residue, iota, rzf(0:2,0:31)
      REAL                 :: tangent(1:2,1:2), wr(1:2), wi(1:2), vr(1:2,1:2), vi(1:2,1:2)
      REAL   , allocatable :: Ri(:), Zi(:), Rnc(:), Rns(:), Znc(:), Zns(:)
   end type magneticaxis
@@ -63,7 +63,7 @@ module oculus
 
   type homoclinictangle 
      INTEGER              :: Nfp, xits, maxits, hits, ilobe(1:2), Lallocated, maxilobe, nbfield(0:1)
-     REAL                 :: odetol, xtol, htol, ltol, R, Z, dU, dS, xerror, herror, lerror(1:2), residue
+     REAL                 :: odetol, xtol, htol, ltol, R, Z, phi, dU, dS, xerror, herror, lerror(1:2), residue
      REAL                 :: tangent(1:2,1:2), wr(1:2), wi(1:2), vr(1:2,1:2), vi(1:2,1:2)
      REAL, allocatable    :: hpoints(:,:,:)
   end type homoclinictangle
@@ -147,7 +147,7 @@ module oculus
 
   type transformdata
      INTEGER              :: Nfp, Ppts, Lallocated, nbfield(0:1)
-     REAL                 :: Ra, Za, R, Z, iota, odetol
+     REAL                 :: Ra, Za, R, Z, phi, iota, odetol
      REAL   , allocatable :: RZ(:,:)
   end type transformdata
 
@@ -174,9 +174,9 @@ module oculus
   !$OMP threadprivate(rzdata)
 
   type poincaredata
-     INTEGER              :: Nfp = 1, Ppts = 100, idirection = 1, iLyapunov = 0, flparameter = 0
+     INTEGER              :: Nfp, Ppts, idirection, iLyapunov, flparameter
      INTEGER              :: Lallocated, ipts, nbfield(0:1)
-     REAL                 :: phi = zero, R, Z, odetol = 1.0e-08, Ltol = 1.0e-08, Lyapunov = zero, phistart
+     REAL                 :: phi, R, Z, odetol, Ltol, Lyapunov, phistart
      REAL   , allocatable :: RZ(:,:), Ly(:)
   end type poincaredata
 
@@ -362,11 +362,15 @@ contains
     
   end subroutine bf00ac
 
-  subroutine bf00ba( time, RZp, BRZp ) ! this subroutine is currently unused
-    
+#ifdef HAVE_NAG
+  subroutine bf00ba( time, RZp, BRZp ) ! format constrained by the NAG ode integration routines.
     implicit none
-
     INTEGER, parameter  :: Node = 7
+#else    
+  subroutine bf00ba( Node, time, RZp, BRZp ) ! format constrained by the lsode integration routines. 
+    implicit none
+    INTEGER, intent(in) :: Node
+#endif
     
     REAL  , intent(in)  :: time, RZp(1:Node)
     REAL  , intent(out) :: BRZp(1:Node)
@@ -390,8 +394,8 @@ contains
     endif
      
     if( abs(denominator).lt.small ) then
-     write(0,'("bf00aa : ! bfield ! : ifail.eq.0, but |B^z| or |B| < small ; divide-by-zero error ;")')
-     write(0,'("bf00aa : ! bfield ! : B("es23.15","es23.15","es23.15")=("es23.15","es23.15","es23.15")")') &
+     write(0,'("bf00ba : ! bfield ! : ifail.eq.0, but |B^z| or |B| < small ; divide-by-zero error ;")')
+     write(0,'("bf00ba : ! bfield ! : B("es23.15","es23.15","es23.15")=("es23.15","es23.15","es23.15")")') &
            RpZ(1:3), dBRpZ(1:3,0)
      Lbfieldok = .false. ; return
     endif
@@ -637,7 +641,7 @@ contains
     LRwork = lbsfield%N * 4
     SALLOCATE(Rwork,(1:LRwork),zero)
 
-    LIwork = LRwork
+    LIwork = lbsfield%N
     SALLOCATE(Iwork,(1:LIwork),zero)
     
     do ixyz = 1, 3
@@ -1125,7 +1129,7 @@ contains
      call C05PBF( ga00ab, NN, xx(1:NN), ff(1:NN), df(1:Ldf,1:NN), Ldf, laxis%tol, wk(1:Lwk), Lwk, ic05xbf ) ! NAG; 13 Oct 15;
 #else 
      if( iga00aa.le.-3 ) write(0,'("ga00aa :         "2x" : calling HYBRJ1, which calls ga00ab ;")')
-     call HYBRJ1( ga00ab, NN, xx(1:NN), ff(1:NN), df(1:Ldf,1:NN), Ldf, laxis%tol, ic05xbf, wk(1:Lwk), Lwk )
+     call HYBRJ1( ga00ab, NN, xx(1:NN), ff(1:NN), df(1:Ldf,1:NN), Ldf, laxis%tol, ic05xbf )
      if (ic05xbf==1) ic05xbf=0 ! because the MINPACK error code is stupid
 #endif
 
@@ -1136,8 +1140,8 @@ contains
      if( iga00aa.le.-3 ) write(0,'("ga00aa :         "2x" : calling C05NBF, which calls ga00ac ;")')
      call C05NBF( ga00ac, NN, xx(1:NN), ff(1:NN), laxis%tol, wk(1:Lwk), Lwk, ic05xbf ) ! NAG; 13 Oct 15;
 #else 
-     if( iga00aa.le.-3 ) write(0,'("ga00aa :         "2x" : calling HYBRJ1, which calls ga00ac ;")')
-     call HYBRJ1( ga00ac, NN, xx(1:NN), ff(1:NN), laxis%tol, ic05xbf, wk(1:Lwk), Lwk )
+     if( iga00aa.le.-3 ) write(0,'("ga00aa :         "2x" : calling HYBRD1, which calls ga00ac ;")')
+     call HYBRD1( ga00ac, NN, xx(1:NN), ff(1:NN), laxis%tol, ic05xbf )
      if (ic05xbf==1) ic05xbf=0 ! because the MINPACK error code is stupid
 #endif
 
@@ -1232,7 +1236,7 @@ contains
     call F02EBF( job, NM, axis%tangent(1:Lda,1:NM), Lda, & ! NAG; 13 Oct 15;
                  laxis%wr(1:NM), laxis%wi(1:NM), laxis%vr(1:Ldvr,1:NM), Ldvr, laxis%vi(1:Ldvi,1:NM), Ldvi, &
                  wka(1:Lwka), Lwka, if02ebf )
-#else
+#elif defined(HAVE_LAPACK)
     SALLOCATE(eigv,(1:Lda,1:NM),zero)
     call DGEEV( 'N', job, NM, axis%tangent(1:Lda,1:NM), Lda, laxis%wr(1:NM), laxis%wi(1:NM), &
                 eigv, Ldvi, eigv, Ldvi, &
@@ -1310,7 +1314,7 @@ contains
         
     relabs = 'D'
     
-    phistart = zero ; phiend = phistart + pi2/axis%Nfp ! integration endpoints ; 05 Mar 14;
+    phistart = axis%phi ; phiend = phistart + pi2/axis%Nfp
     
     ! initial guess, intialize tangent map integration;
     RZ(1:Node) = (/ xx(1), xx(2),  one, zero, zero, one /) ; lxx(1:2) = xx(1:2)
@@ -1335,8 +1339,7 @@ contains
      iwork=0
 !    istate=1 :  indicates the first lsode call
      istate=1
-!    itask=4 :  normal integration with limited over-shoot (set by
-!               rwork(1) in the i_lsode loop
+!    itask=1 :  integrate until end point is passed and interpolate to it
      itask=1
 !    iopt=1 :  optional inputs are used
      iopt=1
@@ -1381,9 +1384,9 @@ contains
      
      select case( iflag ) 
      case( 1 ) ; ff(1  ) = RZ(1) - xx(1)                         ! must return function;  5 Jun 13;
-      ;        ; ff(2  ) = RZ(2) - xx(2)
+                 ff(2  ) = RZ(2) - xx(2)
      case( 2 ) ; df(1,1) = RZ(3) - one   ; df(1,2) = RZ(4)       ! must return Jacobian;  5 Jun 13;
-      ;        ; df(2,1) = RZ(5)         ; df(2,2) = RZ(6) - one
+                 df(2,1) = RZ(5)         ; df(2,2) = RZ(6) - one
      end select
      
      axis%tangent(1,1) = RZ(3) ; axis%tangent(1,2) = RZ(4)
@@ -1444,7 +1447,7 @@ contains
 
     relabs = 'D'
     
-    phistart = zero ; phiend = phistart + pi2/axis%Nfp ! integration endpoints ; 05 Mar 14;
+    phistart = axis%phi ; phiend = phistart + pi2/axis%Nfp
     
     ! initial guess, intialize tangent map integration;
     RZ(1:Node) = (/ xx(1), xx(2), one, zero, zero, one /) ; lxx(1:2) = xx(1:2) 
@@ -1471,8 +1474,7 @@ contains
      iwork=0
 !    istate=1 :  indicates the first lsode call
      istate=1
-!    itask=4 :  normal integration with limited over-shoot (set by
-!               rwork(1) in the i_lsode loop
+!    itask=1 :  integrate until end point is passed and interpolate to it
      itask=1
 !    iopt=1 :  optional inputs are used
      iopt=1
@@ -1516,10 +1518,10 @@ contains
     else
      
     !select case( iflag ) 
-      ;        ; ff(1  ) = RZ(1) - xx(1)                         ! must return function;  5 Jun 13;
-      ;        ; ff(2  ) = RZ(2) - xx(2)
+                 ff(1  ) = RZ(1) - xx(1)                         ! must return function;  5 Jun 13;
+                 ff(2  ) = RZ(2) - xx(2)
     !case( 2 ) ; df(1,1) = RZ(3) - one   ; df(1,2) = RZ(4)       ! must return Jacobian;  5 Jun 13;
-    ! ;        ; df(2,1) = RZ(5)         ; df(2,2) = RZ(6) - one
+    !            df(2,1) = RZ(5)         ; df(2,2) = RZ(6) - one
     !end select
      
      axis%tangent(1,1) =  one  ; axis%tangent(1,2) = zero
@@ -1565,7 +1567,7 @@ contains
     
     izeta = izeta + 1
     
-    zeta = izeta * ( pi2/axis%Nfp ) / fNtor
+    zeta = axis%phi + izeta * ( pi2/axis%Nfp ) / fNtor
     
     return
     
@@ -1823,9 +1825,9 @@ contains
     ic05pbf = 1
     if( iho00aa.le.-3 ) write(0,'("ho00aa :         "2x" : calling C05PBF, which calls ho00ab ;")')
     call C05PBF( ho00ab, NN, xx(1:NN), ff(1:NN), df(1:Ldf,1:NN), Ldf, ltangle%xtol, wk(1:Lwk), Lwk, ic05pbf ) ! NAG; 13 Oct 15;
-#else 
+
     if( iho00aa.le.-3 ) write(0,'("ho00aa :         "2x" : calling HYBRJ1, which calls ho00ab ;")')
-    call HYBRJ1( ho00ab, NN, xx(1:NN), ff(1:NN), df(1:Ldf,1:NN), Ldf, ltangle%xtol, ic05pbf, wk(1:Lwk), Lwk )
+    call HYBRJ1( ho00ab, NN, xx(1:NN), ff(1:NN), df(1:Ldf,1:NN), Ldf, ltangle%xtol, ic05pbf )
     if (ic05pbf==1) ic05pbf=0 ! because the MINPACK error code is stupid
 #endif
 
@@ -1862,7 +1864,7 @@ contains
 
     ltangle%R = xx(1) ; ltangle%Z = xx(2)
     ltangle%tangent(1:Lda,1:NM) = tangle%tangent(1:Lda,1:NM) ; ltangle%residue = tangle%residue
-    ;tangle%R = xx(1) ;  tangle%Z = xx(2)
+     tangle%R = xx(1) ;  tangle%Z = xx(2)
     
     if( ltangle%residue.ge.zero ) then ; iho00aa = 3 ; goto 9999 ! not unstable; 02 Jun 15;
     endif
@@ -1874,13 +1876,13 @@ contains
     call F02EBF( job, NM, tangle%tangent(1:Lda,1:NM), Lda, & ! NAG; 13 Oct 15;
                  tangle%wr(1:NM), tangle%wi(1:NM), tangle%vr(1:Ldvr,1:NM), Ldvr, tangle%vi(1:Ldvi,1:NM), Ldvi, &
                  wka(1:Lwka), Lwka, if02ebf )
-#else
+#elif defined(HAVE_LAPACK)
     SALLOCATE(eigv,(1:Lda,1:NM),zero)
-     call DGEEV( 'N', job, NM, tangle%tangent(1:Lda,1:NM), Lda, tangle%wr(1:NM), tangle%wi(1:NM), &
-                 eigv, Ldvr, eigv, Ldvi, wka(1:Lwka), Lwka, if02ebf )
-     ltangle%vr(1,:)=eigv(:,1)
-     ltangle%vr(2,:)=eigv(:,2)
-     ltangle%vi=0. ! Assume real eigenvectors
+    call DGEEV( 'N', job, NM, tangle%tangent(1:Lda,1:NM), Lda, tangle%wr(1:NM), tangle%wi(1:NM), &
+                eigv, Ldvr, eigv, Ldvi, wka(1:Lwka), Lwka, if02ebf )
+    ltangle%vr(1,:)=eigv(:,1)
+    ltangle%vr(2,:)=eigv(:,2)
+    ltangle%vi=0. ! Assume real eigenvectors
     DALLOCATE(eigv)
 #endif
     
@@ -1914,15 +1916,15 @@ contains
         sqrt(sum(ltangle%vr(1:2,2)**2)).lt.half      ) then ; iho00aa = 6 ; goto 9999
     endif
     
-    phistart = zero
+    phistart = tangle%phi
     
     do ius = 1, 2 ! determine suitable ilobe; loop over unstable and stable branches; 02 Jun 15;
      
-     ;                   ; RZ(1:   2, 0, ius) = (/ ltangle%R, ltangle%Z /)
+                           RZ(1:   2, 0, ius) = (/ ltangle%R, ltangle%Z /)
      if( ius.eq.1 ) then ; RZ(1:   2, 1, ius) = (/ ltangle%R, ltangle%Z /) + ltangle%dU * ltangle%vr(1:2,ius) ! unstable direction; 01 Jun 15;
      else                ; RZ(1:   2, 1, ius) = (/ ltangle%R, ltangle%Z /) + ltangle%dS * ltangle%vr(1:2,ius) !   stable direction; 01 Jun 15;
      endif
-     ;                   ; RZ(3:Node, 1, ius) = (/ one, zero, zero, one /) ! initialize tangent map; not actually used; 02 Jun 15
+                           RZ(3:Node, 1, ius) = (/ one, zero, zero, one /) ! initialize tangent map; not actually used; 02 Jun 15
      
      tangle%ilobe(ius) = 0 ! initialize counter; 01 Jun 15;
      
@@ -1944,8 +1946,7 @@ contains
       iwork=0
 !     istate=1 :  indicates the first lsode call
       istate=1
-!     itask=4 :  normal integration with limited over-shoot (set by
-!                rwork(1) in the i_lsode loop
+!     itask=1 :  integrate until end point is passed and interpolate to it
       itask=1
 !     iopt=1 :  optional inputs are used
       iopt=1
@@ -2017,7 +2018,7 @@ contains
      ic05pbf = 1 ! NAG; 13 Oct 15;
      call C05PBF( ho00bb, NN, xx(1:NN), ff(1:NN), df(1:Ldf,1:NN), Ldf, ltangle%htol, wk(1:Lwk), Lwk, ic05pbf )
 #else 
-     call HYBRJ1( ho00bb, NN, xx(1:NN), ff(1:NN), df(1:Ldf,1:NN), Ldf, ltangle%htol, ic05pbf, wk(1:Lwk), Lwk )
+     call HYBRJ1( ho00bb, NN, xx(1:NN), ff(1:NN), df(1:Ldf,1:NN), Ldf, ltangle%htol, ic05pbf )
      if (ic05pbf==1) ic05pbf=0 ! because the MINPACK error code is stupid
 #endif
      
@@ -2060,7 +2061,7 @@ contains
     
     do ius = 1, 2
      
-     ;                   ; phistart = zero
+                           phistart = tangle%phi
      if( ius.eq.1 ) then ; phiend   = phistart + pi2/tangle%Nfp ; dUS = ltangle%dU / ltangle%wr(ius)
      else                ; phiend   = phistart - pi2/tangle%Nfp ; dUS = ltangle%dS * ltangle%wr(ius)
      endif
@@ -2080,8 +2081,7 @@ contains
      iwork=0
 !    istate=1 :  indicates the first lsode call
      istate=1
-!    itask=4 :  normal integration with limited over-shoot (set by
-!               rwork(1) in the i_lsode loop
+!    itask=1 :  integrate until end point is passed and interpolate to it
      itask=1
 !    iopt=1 :  optional inputs are used
      iopt=1
@@ -2201,7 +2201,7 @@ contains
     
     relabs = 'D'
     
-    phistart = zero ; phiend = phistart + pi2/tangle%Nfp ! integration endpoints ; 05 Mar 14;
+    phistart = tangle%phi ; phiend = phistart + pi2/tangle%Nfp
     
     RZ(1:Node) = (/ xx(1), xx(2),  one, zero, zero, one /) ; lxx(1:2) = xx(1:NN)
     
@@ -2221,8 +2221,7 @@ contains
     iwork=0
 !   istate=1 :  indicates the first lsode call
     istate=1
-!   itask=4 :  normal integration with limited over-shoot (set by
-!              rwork(1) in the i_lsode loop
+!   itask=1 :  integrate until end point is passed and interpolate to it
     itask=1
 !   iopt=1 :  optional inputs are used
     iopt=1
@@ -2260,9 +2259,9 @@ contains
      
      select case( iflag ) 
      case( 1 ) ; ff(1  ) = RZ(1) - xx(1)                            ! must return function;  5 Jun 13;
-      ;        ; ff(2  ) = RZ(2) - xx(2)
+                 ff(2  ) = RZ(2) - xx(2)
      case( 2 ) ; df(1,1) = RZ(3) - one   ; df(1,2) = RZ(4)       ! must return Jacobian;  5 Jun 13;
-      ;        ; df(2,1) = RZ(5)         ; df(2,2) = RZ(6) - one
+                 df(2,1) = RZ(5)         ; df(2,2) = RZ(6) - one
      end select
      
      tangle%tangent(1,1) = RZ(3) ; tangle%tangent(1,2) = RZ(4)
@@ -2319,7 +2318,7 @@ contains
     
     do ius = 1, 2
      
-     ii = 0 ; phistart = zero
+     ii = 0 ; phistart = tangle%phi
      
      RZ(1:2,ius) = (/ tangle%R, tangle%Z /) + dd(ius) * tangle%vr(1:2,ius) ! displace along unstable direction; 19 Nov 14;
      
@@ -2344,8 +2343,7 @@ contains
       iwork=0
 !     istate=1 :  indicates the first lsode call
       istate=1
-!     itask=4 :  normal integration with limited over-shoot (set by
-!                rwork(1) in the i_lsode loop
+!     itask=1 :  integrate until end point is passed and interpolate to it
       itask=1
 !     iopt=1 :  optional inputs are used
       iopt=1
@@ -2381,11 +2379,11 @@ contains
     
     select case( iflag )
     case( 1 ) ; ff(1  ) = +   RZ(1,1)                  - RZ(1,2)
-     ;        ; ff(2  ) = +   RZ(2,1)                  - RZ(2,2)
+                ff(2  ) = +   RZ(2,1)                  - RZ(2,2)
     case( 2 ) ; df(1,1) = + ( RZ(3,1) * tangle%vr(1,1) + RZ(4,1) * tangle%vr(2,1) ) * dd(1)
-     ;        ; df(2,1) = + ( RZ(5,1) * tangle%vr(1,1) + RZ(6,1) * tangle%vr(2,1) ) * dd(1)
-     ;        ; df(1,2) = - ( RZ(3,2) * tangle%vr(1,2) + RZ(4,2) * tangle%vr(2,2) ) * dd(2)
-     ;        ; df(2,2) = - ( RZ(5,2) * tangle%vr(1,2) + RZ(6,2) * tangle%vr(2,2) ) * dd(2)
+                df(2,1) = + ( RZ(5,1) * tangle%vr(1,1) + RZ(6,1) * tangle%vr(2,1) ) * dd(1)
+                df(1,2) = - ( RZ(3,2) * tangle%vr(1,2) + RZ(4,2) * tangle%vr(2,2) ) * dd(2)
+                df(2,2) = - ( RZ(5,2) * tangle%vr(1,2) + RZ(6,2) * tangle%vr(2,2) ) * dd(2)
     end select
     
     if( iflag.eq.1 ) then ! only in this case is the "function" calculated; 02 Jun 15;
@@ -2615,7 +2613,7 @@ contains
     SALLOCATE(curve%tt,(1:NN),zero)    
     curve%tt(1:NN) = (/ ( ii, ii = 0, NN-1 ) /) * (pi2/Nfp) / NN
     do jj = 0, Ntor ; curve%ct(1:NN,jj) = cos( jj * Nfp * curve%tt(1:NN) )
-     ;              ; curve%st(1:NN,jj) = sin( jj * Nfp * curve%tt(1:NN) )
+                      curve%st(1:NN,jj) = sin( jj * Nfp * curve%tt(1:NN) )
     enddo
     DALLOCATE(curve%tt)
 
@@ -2634,9 +2632,9 @@ contains
      if( ifail.le.-4 ) write(0,9002)          "Zns", lcurve%Zns(1:lcurve%Ntor)
      
      SALLOCATE(XXmn,(1:NXmn),zero)
-     ;  ii = 0       ; XXmn(   ii+1) = lcurve%Rnc(ii) ; XXmn(tN+   ii+1) = lcurve%Znc(ii) ! pack independent variable;  8 Jul 15;
+        ii = 0       ; XXmn(   ii+1) = lcurve%Rnc(ii) ; XXmn(tN+   ii+1) = lcurve%Znc(ii) ! pack independent variable;  8 Jul 15;
      do ii = 1, Ntor ; XXmn(   ii+1) = lcurve%Rnc(ii) ; XXmn(tN+   ii+1) = lcurve%Znc(ii)
-      ;              ; XXmn(tN-ii+1) = lcurve%Rns(ii) ; XXmn(tN+tN-ii+1) = lcurve%Zns(ii)
+                       XXmn(tN-ii+1) = lcurve%Rns(ii) ; XXmn(tN+tN-ii+1) = lcurve%Zns(ii)
      enddo
      
      SALLOCATE(FXmn,(1:NXmn       ),zero) ! "function"   vector;  8 Jul 15;
@@ -2653,7 +2651,7 @@ contains
      call C05PBF( ec00ab, NXmn, XXmn(1:NXmn), FXmn(1:NXmn), DXmn(1:LXmn,1:NXmn), LXmn, lcurve%etol, wk(1:Lwk), Lwk, ic05pbf )
 #else 
      if( iec00aa.le.-3 ) write(0,'("ec00aa :         "2x" : calling HYBRJ1, which calls ec00ab ;")')
-     call HYBRJ1( ec00ab, NXmn, XXmn(1:NXmn), FXmn(1:NXmn), DXmn(1:LXmn,1:NXmn), LXmn, lcurve%etol, ic05pbf, wk(1:Lwk), Lwk )
+     call HYBRJ1( ec00ab, NXmn, XXmn(1:NXmn), FXmn(1:NXmn), DXmn(1:LXmn,1:NXmn), LXmn, lcurve%etol, ic05pbf )
      if (ic05pbf==1) ic05pbf=0 ! because the MINPACK error code is stupid
 #endif
 
@@ -2688,9 +2686,9 @@ contains
      endif
 
      if( ic05pbf.eq. 0 ) then ! NAG routine successfully located "x" s.t. "f(x)=0";  8 Jul 15;
-      ;  ii = 0       ; lcurve%Rnc(ii) = XXmn(   ii+1) ; lcurve%Znc(ii) = XXmn(tN+   ii+1) ! unpack solution; 17 Jun 15;
+         ii = 0       ; lcurve%Rnc(ii) = XXmn(   ii+1) ; lcurve%Znc(ii) = XXmn(tN+   ii+1) ! unpack solution; 17 Jun 15;
       do ii = 1, Ntor ; lcurve%Rnc(ii) = XXmn(   ii+1) ; lcurve%Znc(ii) = XXmn(tN+   ii+1)
-       ;              ; lcurve%Rns(ii) = XXmn(tN-ii+1) ; lcurve%Zns(ii) = XXmn(tN+tN-ii+1)
+                        lcurve%Rns(ii) = XXmn(tN-ii+1) ; lcurve%Zns(ii) = XXmn(tN+tN-ii+1)
       enddo
      endif
      
@@ -2723,14 +2721,14 @@ contains
 
      SALLOCATE(Xfmn,(1:Nfmn),zero)    
      if    ( curve%emethod.eq.1 .or. curve%emethod.eq.2 ) then ! independent variable is X;  8 Jul 15;
-      ;  ii = 0       ; Xfmn(   ii+1) = lcurve%Znc(ii)
+         ii = 0       ; Xfmn(   ii+1) = lcurve%Znc(ii)
       do ii = 1, Ntor ; Xfmn(   ii+1) = lcurve%Znc(ii)
-       ;              ; Xfmn(tN-ii+1) = lcurve%Zns(ii)
+                        Xfmn(tN-ii+1) = lcurve%Zns(ii)
       enddo
      elseif( curve%emethod.eq.3 .or. curve%emethod.eq.4 ) then ! independent variable is R;  8 Jul 15;
-      ;  ii = 0       ; Xfmn(   ii+1) = lcurve%Rnc(ii)
+         ii = 0       ; Xfmn(   ii+1) = lcurve%Rnc(ii)
       do ii = 1, Ntor ; Xfmn(   ii+1) = lcurve%Rnc(ii)
-       ;              ; Xfmn(tN-ii+1) = lcurve%Rns(ii)
+                        Xfmn(tN-ii+1) = lcurve%Rns(ii)
       enddo
      endif
      
@@ -2752,14 +2750,14 @@ contains
 1000 format("ec00aa :         "2x" : calling lsodar, which calls ec00bb ; tau="es13.5" ; tauend="es13.5" ; N="i3 &
             " ; relabs="a2" ;")
 !    set the integrator parameters.
-     liw=20
-     lrw=20+16*Nfmn
+     ng=1
+     liw=20+Nfmn
+     lrw=22+16*Nfmn+3*ng
      SALLOCATE(iwork,(1:liw),zero)
      SALLOCATE(rwork,(1:lrw),zero)
 !    istate=1 :  indicates the first lsode call
      istate=1
-!    itask=4 :  normal integration with limited over-shoot (set by
-!               rwork(1) in the i_lsode loop
+!    itask=1 :  integrate until end point is passed and interpolate to it
      itask=1
 !    iopt=1 :  optional inputs are used
      iopt=1
@@ -2776,8 +2774,6 @@ contains
      rtol=odetol
 !    atol :  absolute tolerance
      atol=odetol
-!    ng : number of roots being found
-     ng=1
 !    initialize for loop
      tauc=tau
      taue=tauc
@@ -2825,14 +2821,14 @@ contains
      
     !if( id02bjf.eq.0 ) then
      if    ( curve%emethod.eq.1 .or. curve%emethod.eq.2 ) then
-      ;  ii = 0       ; lcurve%Znc(ii) = Xfmn(   ii+1) ; lcurve%Rnc(ii) = curve%Rnc(ii)
+         ii = 0       ; lcurve%Znc(ii) = Xfmn(   ii+1) ; lcurve%Rnc(ii) = curve%Rnc(ii)
       do ii = 1, Ntor ; lcurve%Znc(ii) = Xfmn(   ii+1) ; lcurve%Rnc(ii) = curve%Rnc(ii)
-       ;              ; lcurve%Zns(ii) = Xfmn(tN-ii+1) ; lcurve%Rns(ii) = curve%Rns(ii)
+                        lcurve%Zns(ii) = Xfmn(tN-ii+1) ; lcurve%Rns(ii) = curve%Rns(ii)
       enddo
      elseif( curve%emethod.eq.3 .or. curve%emethod.eq.4 ) then
-      ;  ii = 0       ; lcurve%Rnc(ii) = Xfmn(   ii+1) ; lcurve%Znc(ii) = curve%Znc(ii)
+         ii = 0       ; lcurve%Rnc(ii) = Xfmn(   ii+1) ; lcurve%Znc(ii) = curve%Znc(ii)
       do ii = 1, Ntor ; lcurve%Rnc(ii) = Xfmn(   ii+1) ; lcurve%Znc(ii) = curve%Znc(ii)
-       ;              ; lcurve%Rns(ii) = Xfmn(tN-ii+1) ; lcurve%Zns(ii) = curve%Zns(ii)
+                        lcurve%Rns(ii) = Xfmn(tN-ii+1) ; lcurve%Zns(ii) = curve%Zns(ii)
       enddo
      endif
 
@@ -2842,9 +2838,9 @@ contains
 
      itau = curve%itau
      
-     ;  ii = 0       ;  curve%iRnc(ii,  itau) = lcurve%Rnc(ii       ) ;  curve%iZnc(ii,  itau) = lcurve%Znc(ii       )
+        ii = 0       ;  curve%iRnc(ii,  itau) = lcurve%Rnc(ii       ) ;  curve%iZnc(ii,  itau) = lcurve%Znc(ii       )
      do ii = 1, Ntor ;  curve%iRnc(ii,  itau) = lcurve%Rnc(ii       ) ;  curve%iZnc(ii,  itau) = lcurve%Znc(ii       )
-      ;              ;  curve%iRns(ii,  itau) = lcurve%Rns(ii       ) ;  curve%iZns(ii,  itau) = lcurve%Zns(ii       )
+                        curve%iRns(ii,  itau) = lcurve%Rns(ii       ) ;  curve%iZns(ii,  itau) = lcurve%Zns(ii       )
      enddo
      
      lcurve%itau = itau
@@ -2856,9 +2852,9 @@ contains
      
      lcurve%Lallocated = 1
      
-     ;  ii = 0       ; lcurve%iRnc(ii,0:itau) = curve%iRnc(ii,0:itau) ; lcurve%iZnc(ii,0:itau) = curve%iZnc(ii,0:itau)
+        ii = 0       ; lcurve%iRnc(ii,0:itau) = curve%iRnc(ii,0:itau) ; lcurve%iZnc(ii,0:itau) = curve%iZnc(ii,0:itau)
      do ii = 1, Ntor ; lcurve%iRnc(ii,0:itau) = curve%iRnc(ii,0:itau) ; lcurve%iZnc(ii,0:itau) = curve%iZnc(ii,0:itau)
-      ;              ; lcurve%iRns(ii,0:itau) = curve%iRns(ii,0:itau) ; lcurve%iZns(ii,0:itau) = curve%iZns(ii,0:itau)
+                       lcurve%iRns(ii,0:itau) = curve%iRns(ii,0:itau) ; lcurve%iZns(ii,0:itau) = curve%iZns(ii,0:itau)
      enddo
     !endif
 
@@ -2882,9 +2878,9 @@ contains
      
      SALLOCATE(XXmn,(1:NXmn),zero) 
      ! pack independent variable;  8 Jul 15;
-     ;  ii = 0       ; XXmn(   ii+1) = lcurve%Rnc(ii) ; XXmn(tN+   ii+1) = lcurve%Znc(ii)
+        ii = 0       ; XXmn(   ii+1) = lcurve%Rnc(ii) ; XXmn(tN+   ii+1) = lcurve%Znc(ii)
      do ii = 1, Ntor ; XXmn(   ii+1) = lcurve%Rnc(ii) ; XXmn(tN+   ii+1) = lcurve%Znc(ii)
-      ;              ; XXmn(tN-ii+1) = lcurve%Rns(ii) ; XXmn(tN+tN-ii+1) = lcurve%Zns(ii)
+                       XXmn(tN-ii+1) = lcurve%Rns(ii) ; XXmn(tN+tN-ii+1) = lcurve%Zns(ii)
      enddo
      
      SALLOCATE(FXmn,(1:NXmn       ),zero)
@@ -2906,8 +2902,7 @@ contains
      SALLOCATE(rwork,(1:lrw),zero)
 !    istate=1 :  indicates the first lsode call
      istate=1
-!    itask=4 :  normal integration with limited over-shoot (set by
-!               rwork(1) in the i_lsode loop
+!    itask=1 :  integrate until end point is passed and interpolate to it
      itask=1
 !    iopt=1 :  optional inputs are used
      iopt=1
@@ -2962,9 +2957,9 @@ contains
      endif
      
     !if( id02bjf.eq.0 ) then
-      ;  ii = 0       ; lcurve%Rnc(ii) = XXmn(   ii+1) ; lcurve%Znc(ii) = XXmn(tN+   ii+1) ! unpack solution; 17 Jun 15;
+         ii = 0       ; lcurve%Rnc(ii) = XXmn(   ii+1) ; lcurve%Znc(ii) = XXmn(tN+   ii+1) ! unpack solution; 17 Jun 15;
       do ii = 1, Ntor ; lcurve%Rnc(ii) = XXmn(   ii+1) ; lcurve%Znc(ii) = XXmn(tN+   ii+1)
-       ;              ; lcurve%Rns(ii) = XXmn(tN-ii+1) ; lcurve%Zns(ii) = XXmn(tN+tN-ii+1)
+                        lcurve%Rns(ii) = XXmn(tN-ii+1) ; lcurve%Zns(ii) = XXmn(tN+tN-ii+1)
       enddo
     !endif
 
@@ -3050,13 +3045,13 @@ contains
     SALLOCATE(xx,(1:MM,1:NN),zero)
     
     ! unpack independent variable;  8 Jul 15;
-    ;   ii = 0       ; xx(1,   ii+1) =        XXmn(   ii+1)        ; xx(3,   ii+1) =        XXmn(tN+   ii+1)
-    ;                ; xx(2,   ii+1) =        zero                 ; xx(4,   ii+1) =        zero
+        ii = 0       ; xx(1,   ii+1) =        XXmn(   ii+1)        ; xx(3,   ii+1) =        XXmn(tN+   ii+1)
+                       xx(2,   ii+1) =        zero                 ; xx(4,   ii+1) =        zero
     if( Ntor.ge.1 ) then
      do ii = 1, Ntor ; xx(1,   ii+1) =        XXmn(   ii+1) * half ; xx(3,   ii+1) =        XXmn(tN+   ii+1) * half
-      ;              ; xx(1,NN-ii+1) =        XXmn(tN-ii+1) * half ; xx(3,NN-ii+1) =        XXmn(tN+tN-ii+1) * half
-      ;              ; xx(2,   ii+1) =   ii * XXmn(tN-ii+1) * half ; xx(4,   ii+1) =   ii * XXmn(tN+tN-ii+1) * half
-      ;              ; xx(2,NN-ii+1) = - ii * XXmn(   ii+1) * half ; xx(4,NN-ii+1) = - ii * XXmn(tN+   ii+1) * half
+                       xx(1,NN-ii+1) =        XXmn(tN-ii+1) * half ; xx(3,NN-ii+1) =        XXmn(tN+tN-ii+1) * half
+                       xx(2,   ii+1) =   ii * XXmn(tN-ii+1) * half ; xx(4,   ii+1) =   ii * XXmn(tN+tN-ii+1) * half
+                       xx(2,NN-ii+1) = - ii * XXmn(   ii+1) * half ; xx(4,NN-ii+1) = - ii * XXmn(tN+   ii+1) * half
      enddo
     endif
 
@@ -3148,10 +3143,10 @@ contains
      
        ff(1:MM,1:NN) = ff(1:MM,1:NN) / curve%sN ; ff(1:MM,2:NN) = ff(1:MM,2:NN) * two
      
-       ;   ii = 0       ; FXmn(      ii+1           ) =   ff(1,   ii+1) ; FXmn(tN+   ii+1           ) =   ff(3,   ii+1)
+           ii = 0       ; FXmn(      ii+1           ) =   ff(1,   ii+1) ; FXmn(tN+   ii+1           ) =   ff(3,   ii+1)
        if( Ntor.ge.1 ) then
         do ii = 1, Ntor ; FXmn(      ii+1           ) =   ff(1,   ii+1) ; FXmn(tN+   ii+1           ) =   ff(3,   ii+1)
-         ;              ; FXmn(   tN-ii+1           ) = - ff(1,NN-ii+1) ; FXmn(tN+tN-ii+1           ) = - ff(3,NN-ii+1)
+                          FXmn(   tN-ii+1           ) = - ff(1,NN-ii+1) ; FXmn(tN+tN-ii+1           ) = - ff(3,NN-ii+1)
         enddo
        endif
      
@@ -3185,19 +3180,19 @@ contains
        
        gg(1:MM,1:NN) = gg(1:MM,1:NN) / curve%sN ; gg(1:MM,2:NN) = gg(1:MM,2:NN) * two
        
-       ;   ii = 0       ; DXmn(      ii+1,tA+   jj+1) =   gg(1,   ii+1) ; DXmn(tN+   ii+1,tA+   jj+1) =   gg(3,   ii+1) ! dFRcdXc ; dFZcdXc ; 17 Jun 15;
-       ;   if( jj.gt.0 ) then
-       ;                ; DXmn(      ii+1,tA+tN-jj+1) =   gg(2,   ii+1) ; DXmn(tN+   ii+1,tA+tN-jj+1) =   gg(4,   ii+1) ! dFRcdXs ; dFZcdXs ; 17 Jun 15;
-       ;   endif
+           ii = 0       ; DXmn(      ii+1,tA+   jj+1) =   gg(1,   ii+1) ; DXmn(tN+   ii+1,tA+   jj+1) =   gg(3,   ii+1) ! dFRcdXc ; dFZcdXc ; 17 Jun 15;
+           if( jj.gt.0 ) then
+                          DXmn(      ii+1,tA+tN-jj+1) =   gg(2,   ii+1) ; DXmn(tN+   ii+1,tA+tN-jj+1) =   gg(4,   ii+1) ! dFRcdXs ; dFZcdXs ; 17 Jun 15;
+           endif
        if( Ntor.gt.0 ) then
         do ii = 1, Ntor ; DXmn(      ii+1,tA+   jj+1) =   gg(1,   ii+1) ; DXmn(tN+   ii+1,tA+   jj+1) =   gg(3,   ii+1) ! dFRcdXc ; dFZcdXc ; 17 Jun 15;
-         ; if( jj.gt.0 ) then
-         ;              ; DXmn(      ii+1,tA+tN-jj+1) =   gg(2,   ii+1) ; DXmn(tN+   ii+1,tA+tN-jj+1) =   gg(4,   ii+1) ! dFRcdXs ; dFZcdXs ; 17 Jun 15;
-         ; endif
-         ;              ; DXmn(   tN-ii+1,tA+   jj+1) = - gg(1,NN-ii+1) ; DXmn(tN+tN-ii+1,tA+   jj+1) = - gg(3,NN-ii+1) ! dFRsdXc ; dFZsdXc ; 17 Jun 15;
-         ; if( jj.gt.0 ) then
-         ;              ; DXmn(   tN-ii+1,tA+tN-jj+1) = - gg(2,NN-ii+1) ; DXmn(tN+tN-ii+1,tA+tN-jj+1) = - gg(4,NN-ii+1) ! dFRsdXs ; dFZsdXs ; 17 Jun 15;
-         ; endif
+           if( jj.gt.0 ) then
+                          DXmn(      ii+1,tA+tN-jj+1) =   gg(2,   ii+1) ; DXmn(tN+   ii+1,tA+tN-jj+1) =   gg(4,   ii+1) ! dFRcdXs ; dFZcdXs ; 17 Jun 15;
+           endif
+                          DXmn(   tN-ii+1,tA+   jj+1) = - gg(1,NN-ii+1) ; DXmn(tN+tN-ii+1,tA+   jj+1) = - gg(3,NN-ii+1) ! dFRsdXc ; dFZsdXc ; 17 Jun 15;
+           if( jj.gt.0 ) then
+                          DXmn(   tN-ii+1,tA+tN-jj+1) = - gg(2,NN-ii+1) ; DXmn(tN+tN-ii+1,tA+tN-jj+1) = - gg(4,NN-ii+1) ! dFRsdXs ; dFZsdXs ; 17 Jun 15;
+           endif
         enddo ! end of do ii; 17 Jun 15;
        endif
        
@@ -3219,9 +3214,9 @@ contains
      curve%err = sqrt( sum(FXmn(1:NXmn)**2) )
      if( iec00aa.le.-3 ) then
       write(0,'("ec00ab : its = "i4" : |F|="es13.5" ; ")') curve%its, curve%err
-      ;  ii = 0       ; curve%Rnc(ii) = XXmn(   ii+1) ; curve%Znc(ii) = XXmn(tN+   ii+1)
+         ii = 0       ; curve%Rnc(ii) = XXmn(   ii+1) ; curve%Znc(ii) = XXmn(tN+   ii+1)
       do ii = 1, Ntor ; curve%Rnc(ii) = XXmn(   ii+1) ; curve%Znc(ii) = XXmn(tN+   ii+1)
-       ;              ; curve%Rns(ii) = XXmn(tN-ii+1) ; curve%Zns(ii) = XXmn(tN+tN-ii+1)
+                        curve%Rns(ii) = XXmn(tN-ii+1) ; curve%Zns(ii) = XXmn(tN+tN-ii+1)
       enddo
       if( iec00aa.le.-5 ) pause
      endif
@@ -3265,15 +3260,15 @@ contains
     SALLOCATE(XXmn,(1:NXmn),zero)
     if    ( curve%emethod.eq.1 .or. curve%emethod.eq.2 ) then
      ! Zmn are independent freedom; need to give initial guess for Xc = R ; 19 Jun 15;
-     ;  ii = 0       ; XXmn(   ii+1) = curve%Rnc(ii) ; XXmn(tN+   ii+1) = Xfmn(   ii+1)
+        ii = 0       ; XXmn(   ii+1) = curve%Rnc(ii) ; XXmn(tN+   ii+1) = Xfmn(   ii+1)
      do ii = 1, Ntor ; XXmn(   ii+1) = curve%Rnc(ii) ; XXmn(tN+   ii+1) = Xfmn(   ii+1)
-      ;              ; XXmn(tN-ii+1) = curve%Rns(ii) ; XXmn(tN+tN-ii+1) = Xfmn(tN-ii+1)
+                       XXmn(tN-ii+1) = curve%Rns(ii) ; XXmn(tN+tN-ii+1) = Xfmn(tN-ii+1)
      enddo
     elseif( curve%emethod.eq.3 .or. curve%emethod.eq.4 ) then
      ! Rmn are independent freedom; need to give initial guess for Xc = R ; 19 Jun 15;
-     ;  ii = 0       ; XXmn(   ii+1) = Xfmn(   ii+1) ; XXmn(tN+   ii+1) = curve%Znc(ii)
+        ii = 0       ; XXmn(   ii+1) = Xfmn(   ii+1) ; XXmn(tN+   ii+1) = curve%Znc(ii)
      do ii = 1, Ntor ; XXmn(   ii+1) = Xfmn(   ii+1) ; XXmn(tN+   ii+1) = curve%Znc(ii)
-      ;              ; XXmn(tN-ii+1) = Xfmn(tN-ii+1) ; XXmn(tN+tN-ii+1) = curve%Zns(ii)
+                       XXmn(tN-ii+1) = Xfmn(tN-ii+1) ; XXmn(tN+tN-ii+1) = curve%Zns(ii)
      enddo
     endif
         
@@ -3292,15 +3287,15 @@ contains
     
     if    ( curve%emethod.eq.1 .or. curve%emethod.eq.2 ) then
      ! Zmn are independent freedom; need to give initial guess for Xc = R ; 19 Jun 15;
-     ;  ii = 0       ; Xcmn(   ii+1) = curve%Rnc(ii)
+        ii = 0       ; Xcmn(   ii+1) = curve%Rnc(ii)
      do ii = 1, Ntor ; Xcmn(   ii+1) = curve%Rnc(ii)
-      ;              ; Xcmn(tN-ii+1) = curve%Rns(ii)
+                       Xcmn(tN-ii+1) = curve%Rns(ii)
      enddo
     elseif( curve%emethod.eq.3 .or. curve%emethod.eq.4 ) then
      ! Rmn are independent freedom; need to give initial guess for Xc = Z ; 19 Jun 15;
-     ;  ii = 0       ; Xcmn(   ii+1) = curve%Znc(ii)
+        ii = 0       ; Xcmn(   ii+1) = curve%Znc(ii)
      do ii = 1, Ntor ; Xcmn(   ii+1) = curve%Znc(ii)
-      ;              ; Xcmn(tN-ii+1) = curve%Zns(ii)
+                       Xcmn(tN-ii+1) = curve%Zns(ii)
      enddo
     endif
     
@@ -3317,7 +3312,7 @@ contains
     ic05pbf = 1 ! NAG; 13 Oct 15;
     call C05PBF( ec00ca, Ncmn, Xcmn(1:Ncmn), Fcmn(1:Ncmn), Dcmn(1:Lcmn,1:Ncmn), Lcmn, curve%etol, wk(1:Lwk), Lwk, ic05pbf )
 #else 
-    call HYBRJ1( ec00ca, Ncmn, Xcmn(1:Ncmn), Fcmn(1:Ncmn), Dcmn(1:Lcmn,1:Ncmn), Lcmn, curve%etol, ic05pbf, wk(1:Lwk), Lwk )
+    call HYBRJ1( ec00ca, Ncmn, Xcmn(1:Ncmn), Fcmn(1:Ncmn), Dcmn(1:Lcmn,1:Ncmn), Lcmn, curve%etol, ic05pbf )
     if (ic05pbf==1) ic05pbf=0 ! because the MINPACK error code is stupid
 #endif
 
@@ -3349,14 +3344,14 @@ contains
     endif
 
     if    ( curve%emethod.eq.1 .or. curve%emethod.eq.2 ) then ! Zmn are independent freedom; 19 Jun 15;
-     ;  ii = 0       ; curve%Rnc(ii) = Xcmn(   ii+1)
+        ii = 0       ; curve%Rnc(ii) = Xcmn(   ii+1)
      do ii = 1, Ntor ; curve%Rnc(ii) = Xcmn(   ii+1)
-      ;              ; curve%Rns(ii) = Xcmn(tN-ii+1)
+                       curve%Rns(ii) = Xcmn(tN-ii+1)
      enddo
     elseif( curve%emethod.eq.3 .or. curve%emethod.eq.4 ) then ! Rmn are independent freedom; 19 Jun 15;
-     ;  ii = 0       ; curve%Znc(ii) = Xcmn(   ii+1)
+        ii = 0       ; curve%Znc(ii) = Xcmn(   ii+1)
      do ii = 1, Ntor ; curve%Znc(ii) = Xcmn(   ii+1)
-      ;              ; curve%Zns(ii) = Xcmn(tN-ii+1)
+                       curve%Zns(ii) = Xcmn(tN-ii+1)
      enddo
     endif
     
@@ -3474,14 +3469,14 @@ contains
     itau = curve%itau ! shorthand; 29 Jul 15;
 
     if    ( curve%emethod.eq.1 .or. curve%emethod.eq.2 ) then
-     ;  ii = 0       ; curve%iZnc(ii,itau) = Xfmn(   ii+1) ; curve%iRnc(ii,itau) = curve%Rnc(ii)
+        ii = 0       ; curve%iZnc(ii,itau) = Xfmn(   ii+1) ; curve%iRnc(ii,itau) = curve%Rnc(ii)
      do ii = 1, Ntor ; curve%iZnc(ii,itau) = Xfmn(   ii+1) ; curve%iRnc(ii,itau) = curve%Rnc(ii)
-      ;              ; curve%iZns(ii,itau) = Xfmn(tN-ii+1) ; curve%iRns(ii,itau) = curve%Rns(ii)
+                       curve%iZns(ii,itau) = Xfmn(tN-ii+1) ; curve%iRns(ii,itau) = curve%Rns(ii)
      enddo
     elseif( curve%emethod.eq.3 .or. curve%emethod.eq.4 ) then
-     ;  ii = 0       ; curve%iRnc(ii,itau) = Xfmn(   ii+1) ; curve%iZnc(ii,itau) = curve%Znc(ii)
+        ii = 0       ; curve%iRnc(ii,itau) = Xfmn(   ii+1) ; curve%iZnc(ii,itau) = curve%Znc(ii)
      do ii = 1, Ntor ; curve%iRnc(ii,itau) = Xfmn(   ii+1) ; curve%iZnc(ii,itau) = curve%Znc(ii)
-      ;              ; curve%iRns(ii,itau) = Xfmn(tN-ii+1) ; curve%iZns(ii,itau) = curve%Zns(ii)
+                       curve%iRns(ii,itau) = Xfmn(tN-ii+1) ; curve%iZns(ii,itau) = curve%Zns(ii)
      enddo
     endif
         
@@ -3569,13 +3564,13 @@ contains
     
     SALLOCATE(xx,(1:MM,1:NN),zero) ! pack the Fourier harmonics of the dependent variable into FFT format; 19 Jun 15;
     
-    ;   ii = 0       ; xx(1,   ii+1) =        Xcmn(   ii+1)       
-    ;                ; xx(2,   ii+1) =        zero                
+        ii = 0       ; xx(1,   ii+1) =        Xcmn(   ii+1)       
+                       xx(2,   ii+1) =        zero                
     if( Ntor.ge.1 ) then                                          
      do ii = 1, Ntor ; xx(1,   ii+1) =        Xcmn(   ii+1) * half
-      ;              ; xx(1,NN-ii+1) =        Xcmn(tN-ii+1) * half
-      ;              ; xx(2,   ii+1) =   ii * Xcmn(tN-ii+1) * half
-      ;              ; xx(2,NN-ii+1) = - ii * Xcmn(   ii+1) * half
+                       xx(1,NN-ii+1) =        Xcmn(tN-ii+1) * half
+                       xx(2,   ii+1) =   ii * Xcmn(tN-ii+1) * half
+                       xx(2,NN-ii+1) = - ii * Xcmn(   ii+1) * half
      enddo
     endif
 
@@ -3677,13 +3672,12 @@ contains
        kk = 3 ! need to return FZ; 19 Jun 15;
      endif
      
-     ;    ii = 0       ; Fcmn(   ii+1        ) =   ff(kk,   ii+1)
-     ;if( Ntor.ge.1 ) then                                        
-     ; do ii = 1, Ntor ; Fcmn(   ii+1        ) =   ff(kk,   ii+1)
-     ;  ;              ; Fcmn(tN-ii+1        ) = - ff(kk,NN-ii+1)
-     ; enddo
-     ;endif
-     
+          ii = 0       ; Fcmn(   ii+1        ) =   ff(kk,   ii+1)
+      if( Ntor.ge.1 ) then                                        
+       do ii = 1, Ntor ; Fcmn(   ii+1        ) =   ff(kk,   ii+1)
+                         Fcmn(tN-ii+1        ) = - ff(kk,NN-ii+1)
+       enddo
+      endif      
     case( 2 )
      
      FATAL(ec00ca, curve%Lrz.le.0, need to implement derivatives)
@@ -3720,19 +3714,19 @@ contains
         kk = 2 ! need to return FZ; 19 Jun 15;
       endif
      
-      ;   ii = 0       ; Dcmn(   ii+1,   jj+1) =   gg(1+kk,   ii+1)
-      ;   if( jj.gt.0 ) then
-      ;                ; Dcmn(   ii+1,tN-jj+1) =   gg(2+kk,   ii+1)
-      ;   endif
+          ii = 0       ; Dcmn(   ii+1,   jj+1) =   gg(1+kk,   ii+1)
+          if( jj.gt.0 ) then
+                         Dcmn(   ii+1,tN-jj+1) =   gg(2+kk,   ii+1)
+          endif
       if( Ntor.gt.0 ) then
        do ii = 1, Ntor ; Dcmn(   ii+1,   jj+1) =   gg(1+kk,   ii+1)
-        ; if( jj.gt.0 ) then
-        ;              ; Dcmn(   ii+1,tN-jj+1) =   gg(2+kk,   ii+1)
-        ; endif
-        ;              ; Dcmn(tN-ii+1,   jj+1) = - gg(1+kk,NN-ii+1)
-        ; if( jj.gt.0 ) then
-        ;              ; Dcmn(tN-ii+1,tN-jj+1) = - gg(2+kk,NN-ii+1)
-        ; endif
+          if( jj.gt.0 ) then
+                         Dcmn(   ii+1,tN-jj+1) =   gg(2+kk,   ii+1)
+          endif
+                         Dcmn(tN-ii+1,   jj+1) = - gg(1+kk,NN-ii+1)
+          if( jj.gt.0 ) then
+                         Dcmn(tN-ii+1,tN-jj+1) = - gg(2+kk,NN-ii+1)
+          endif
        enddo ! end of do ii; 17 Jun 15;
       endif
       
@@ -3902,7 +3896,7 @@ contains
 
     do ipoint = 1, ltransform%Ppts
      
-     phistart = zero ; phiend = dzeta
+     phistart = ltransform%phi ; phiend = phistart + dzeta
      
      Lbfieldok = .true.
      
@@ -3916,8 +3910,7 @@ contains
      iwork=0
 !    istate=1 :  indicates the first lsode call
      istate=1
-!    itask=4 :  normal integration with limited over-shoot (set by
-!               rwork(1) in the i_lsode loop
+!    itask=1 :  integrate until end point is passed and interpolate to it
      itask=1
 !    iopt=1 :  optional inputs are used
      iopt=1
@@ -4113,10 +4106,11 @@ contains
     REAL               :: wk(1:Lwk)
     external           :: D02BJX
 #else
-    INTEGER, parameter :: liw=20, lrw=20+16*Node
+    INTEGER, parameter :: ng=1
+    INTEGER, parameter :: liw=20+Node, lrw=22+16*Node+3*ng
     INTEGER            :: iwork(liw)
     REAL               :: rwork(lrw)
-    INTEGER            :: iopt,istate,itask,itol,jt,ng,jroot
+    INTEGER            :: iopt,istate,itask,itol,mf
     REAL               :: atol,rtol
 #endif    
     ipp00aa = ifail ; nbfield(0:1) = 0
@@ -4147,7 +4141,7 @@ contains
     ii = 0 ; lpoincare%ipts = ii
 
     RZp(1:3) = (/ lpoincare%R, lpoincare%Z, lpoincare%phi /)
-    tv(1:2) = (/ sqrt(half), sqrt(half) /) ; lyapunovsum = zero
+    tv(1:2) = (/ sqrt(half), sqrt(half) /) ; Lyapunovsum = zero
     
     lpoincare%RZ(1:2,ii) = RZp(1:2)
     
@@ -4165,7 +4159,7 @@ contains
      
 #ifdef HAVE_NAG
      id02bjf = 1
-     call D02BJF( timestart, timeend, Node, RZp(1:Node), bf00aa, lpoincare%odetol, relabs, D02BJX, pp00ab, &
+     call D02BJF( timestart, timeend, Node, RZp(1:Node), bf00ba, lpoincare%odetol, relabs, D02BJX, pp00ab, &
                   wk(1:Lwk), id02bjf ) ! NAG ode integration;
 #else
 !    set the integrator parameters.
@@ -4173,8 +4167,7 @@ contains
      iwork=0
 !    istate=1 :  indicates the first lsode call
      istate=1
-!    itask=4 :  normal integration with limited over-shoot (set by
-!               rwork(1) in the i_lsode loop
+!    itask=1 :  integrate until end point is passed and interpolate to it
      itask=1
 !    iopt=1 :  optional inputs are used
      iopt=1
@@ -4183,31 +4176,30 @@ contains
 !    rwork(7) :  set minimum lsode-internal step size
 !    iwork(6) :  set maximum lsode-internal steps
 !    iwork(7) :  set maximum lsode-internal error messages printed
-!    jt=2 :  internally generated full Jacobian
-     jt=2
+!    mf=10 :  non-stiff Adams method of integration
+     mf=10
 !    itol=1 :  indicates absolute tolerance is just a scalar
      itol=1
 !    rtol :  relative tolerance
      rtol=lpoincare%odetol
 !    atol :  absolute tolerance
      atol=lpoincare%odetol
-!    ng : number of roots being found
-     ng=1
 !    do integration
-     call lsodar(bf00aa,(/Node/),RZp,timestart,timeend, &
+     call lsode(bf00ba,(/Node/),RZp,timestart,timeend, &
                 itol,(/rtol/),(/atol/),itask,istate,iopt, &
-                rwork,lrw,iwork,liw,du00aa,jt,pp00ab,ng,jroot)
+                rwork,lrw,iwork,liw,du00aa,mf)
      id02bjf=istate
      if (istate>0) id02bjf=0
 #endif
 
      if( .not.Lbfieldok ) id02bjf = -1 ! override error flag; an error has occured in user-supplied bfield;
-     
+
      if( id02bjf.ne.0 ) then
+      lpoincare%ipts = ii-1
       lpoincare%RZ(1,ii:lpoincare%Ppts) = lpoincare%RZ(1,ii-1)
       lpoincare%RZ(2,ii:lpoincare%Ppts) = lpoincare%RZ(2,ii-1)
       if( ii.gt.1 ) then
-      lpoincare%Ly(  ii:lpoincare%Ppts) = lpoincare%Ly(  ii-1) 
+       lpoincare%Ly(  ii:lpoincare%Ppts) = lpoincare%Ly(  ii-1) 
       endif
       ipp00aa = 1 ; goto 9999 ! complete array with dummy data; 02 Jun 15;
      endif
@@ -4217,7 +4209,7 @@ contains
      if( lpoincare%flparameter.eq.0 .and. lpoincare%iLyapunov.eq.1 ) then
       tv(1:2) = tv(1:2) / sqrt( tv(1)**2 + tv(2)**2 ) ! re-normalize; 13 Jun 15;
       tv(1:2) = (/ RZp(4)*tv(1) + RZp(5)*tv(2), RZp(6)*tv(1) + RZp(7)*tv(2) /) ! tangent mapping matrix vector multiplication; 13 Jun 15;
-      lyapunovsum = lyapunovsum + log( sqrt( tv(1)**2 + tv(2)**2 ) ) 
+      Lyapunovsum = Lyapunovsum + log( sqrt( tv(1)**2 + tv(2)**2 ) ) 
       lpoincare%Lyapunov = Lyapunovsum / ( ii*(pi2/lpoincare%Nfp) )
       lpoincare%Ly(ii) = lpoincare%Lyapunov
      endif
@@ -4255,21 +4247,6 @@ contains
     return
     
   end function pp00ab
-#else    
-  subroutine pp00ab( Node, time, RZp, NB, BRZp ) ! format constrained by lsodar
-
-    implicit none
-
-    INTEGER, intent(in) :: Node, NB
-    REAL, intent(in)    :: time, RZp(1:Node)
-    REAL, intent(out)   :: BRZp
-
-   !BRZp = RZp(3) - ( poincare%phistart + poincare%idirection * (pi2/poincare%Nfp) )
-    BRZp = time -   (                     poincare%idirection * (pi2/poincare%Nfp) ) ! 10 Apr 16;
-    
-    return
-    
-  end subroutine pp00ab
 #endif
 
 !latex \subroutine{gc00aa}{follow guiding center;}
@@ -4397,7 +4374,7 @@ contains
 !     
 !#ifdef HAVE_NAG
 !     id02bjf = 1
-!     call D02BJF( phistart, phiend, Node, RZ(1:Node), bf00aa, lpoincare%odetol, relabs, D02BJX, D02BJW, &
+!     call D02BJF( phistart, phiend, Node, RZ(1:Node), bf00ba, lpoincare%odetol, relabs, D02BJX, D02BJW, &
 !                  wk(1:Lwk), id02bjf ) ! NAG ode integration;
 !#else
 !!    set the integrator parameters.
@@ -4405,8 +4382,7 @@ contains
 !     iwork=0
 !!    istate=1 :  indicates the first lsode call
 !     istate=1
-!!    itask=4 :  normal integration with limited over-shoot (set by
-!!               rwork(1) in the i_lsode loop
+!!    itask=1 :  integrate until end point is passed and interpolate to it
 !     itask=1
 !!    iopt=1 :  optional inputs are used
 !     iopt=1
@@ -4424,7 +4400,7 @@ contains
 !!    atol :  absolute tolerance
 !     atol=lpoincare%odetol
 !!    do integration
-!     call lsode(bf00aa,(/Node/),RZ,phistart,phiend, &
+!     call lsode(bf00ba,(/Node/),RZ,phistart,phiend, &
 !                itol,(/rtol/),(/atol/),itask,istate,iopt, &
 !                rwork,lrw,iwork,liw,du00aa,mf)
 !     id02bjf=istate
@@ -4690,7 +4666,7 @@ contains
     enddo ! end of do ii; 02 Jun 15;
     
     do kk = 1, Nc
-     ;             ; rhs(Nh+kk   ) = Md(kk   )
+                     rhs(Nh+kk   ) = Md(kk   )
      do jj = 1, Nh ; mat(Nh+kk,jj) = Mc(kk,jj)
      enddo
     enddo
@@ -5085,7 +5061,7 @@ contains
     Nfp = pp%Nfp
     
     Rmin = pp%Rmin ; Rmax = pp%Rmax ; NR = pp%NR ; DR  = ( Rmax - Rmin ) / NR ; DRDR = DR**2 ; HR = DR * half
-    ;              ;                ; Np = pp%Np ; Dp  = (  pi2 / Nfp  ) / Np ; DpDp = Dp**2 ; Hp = Dp * half
+                                      Np = pp%Np ; Dp  = (  pi2 / Nfp  ) / Np ; DpDp = Dp**2 ; Hp = Dp * half
     Zmin = pp%Zmin ; Zmax = pp%Zmax ; NZ = pp%NZ ; DZ  = ( Zmax - Zmin ) / NZ ; DZDZ = DZ**2
     pressure%Dp = Dp
     
@@ -5264,14 +5240,14 @@ contains
 !        !call bf00ac( phi , RZ(1:2), k1(1:2) )
           phih = kk * Dp + ifb * Hp ; RZ(1:2) = oRZ(1:2) + ifb * Hp * k1(1:2)
           call bf00ac( phih, RZ(1:2), k2(1:2) )
-          ;                         ; RZ(1:2) = oRZ(1:2) + ifb * Hp * k2(1:2)
+                                      RZ(1:2) = oRZ(1:2) + ifb * Hp * k2(1:2)
           call bf00ac( phih, RZ(1:2), k3(1:2) )
 #else
 !        !phi  = kk * Dp            ; RZ(1:2) = oRZ(1:2)
 !        !call bf00ac( Node, phi , RZ(1:2), k1(1:2) )
           phih = kk * Dp + ifb * Hp ; RZ(1:2) = oRZ(1:2) + ifb * Hp * k1(1:2)
           call bf00ac( Node, phih, RZ(1:2), k2(1:2) )
-          ;                         ; RZ(1:2) = oRZ(1:2) + ifb * Hp * k2(1:2)
+                                      RZ(1:2) = oRZ(1:2) + ifb * Hp * k2(1:2)
           call bf00ac( Node, phih, RZ(1:2), k3(1:2) )
 #endif
           
@@ -5307,8 +5283,7 @@ contains
           iwork=0
 !         istate=1 :  indicates the first lsode call
           istate=1
-!         itask=4 :  normal integration with limited over-shoot (set by
-!                    rwork(1) in the i_lsode loop
+!         itask=1 :  integrate until end point is passed and interpolate to it
           itask=1
 !         iopt=1 :  optional inputs are used
           iopt=1
@@ -5596,17 +5571,17 @@ contains
          if    ( ii.eq.1                  ) then
            dpdRR    = sum( (/ +11, -20, + 6, + 4, - 1 /) * pp%p(ii-1:ii+3,jj,kk) ) / twelve / DRDR !
           !         + sum( (/ - 3, -10, +18, - 6, + 1 /) * pp%p(ii-1:ii+3,jj,kk) ) / twelve / DR / R0
-          ! ; sauce = sum( (/ + 5, +15, - 5, + 1      /) * pp%s(ii-1:ii+2,jj-1,kk) * Rh(-1:2) &
+          !   sauce = sum( (/ + 5, +15, - 5, + 1      /) * pp%s(ii-1:ii+2,jj-1,kk) * Rh(-1:2) &
           !              + (/ + 5, +15, - 5, + 1      /) * pp%s(ii-1:ii+2,jj  ,kk) * Rh(-1:2) ) * half / 16 / R0
          elseif( ii.gt.1 .and. ii.lt.NR-1 ) then
            dpdRR    = sum( (/ - 1, +16, -30, +16, - 1 /) * pp%p(ii-2:ii+2,jj,kk) ) / twelve / DRDR !
           !         + sum( (/ + 1, - 8,   0, + 8, - 1 /) * pp%p(ii-2:ii+2,jj,kk) ) / twelve / DR / R0
-          ! ; sauce = sum( (/ - 1, + 9, + 9, - 1      /) * pp%s(ii-2:ii+1,jj-1,kk) * Rh(-2:1) &
+          !   sauce = sum( (/ - 1, + 9, + 9, - 1      /) * pp%s(ii-2:ii+1,jj-1,kk) * Rh(-2:1) &
           !              + (/ - 1, + 9, + 9, - 1      /) * pp%s(ii-2:ii+1,jj  ,kk) * Rh(-2:1) ) * half / 16 / R0
          elseif(               ii.eq.NR-1 ) then
            dpdRR    = sum( (/ - 1, + 4, + 6, -20, +11 /) * pp%p(ii-3:ii+1,jj,kk) ) / twelve / DRDR !
           !         + sum( (/ - 1, + 6, -18, +10, + 3 /) * pp%p(ii-3:ii+1,jj,kk) ) / twelve / DR / R0
-          ! ; sauce = sum( (/ + 1, - 5, +15, + 5      /) * pp%s(ii-3:ii  ,jj-1,kk) * Rh(-3:0) &
+          !   sauce = sum( (/ + 1, - 5, +15, + 5      /) * pp%s(ii-3:ii  ,jj-1,kk) * Rh(-3:0) &
           !              + (/ + 1, - 5, +15, + 5      /) * pp%s(ii-3:ii  ,jj  ,kk) * Rh(-3:0) ) * half / 16 / R0
          endif
           
@@ -5653,7 +5628,7 @@ contains
      case( -5 )
       if( (itime/10   )*10   .eq.itime ) write(0,1005) itime, pn, pn-po
      case( -6 )
-      ;                                                  write(0,1005) itime, pn, pn-po
+      write(0,1005) itime, pn, pn-po
      end select
      
 1005 format("ad00aa : "i9"  : max(p) ="es24.17" ;":" dif(p) ="es13.5" ;")
@@ -5934,7 +5909,7 @@ subroutine bn00aa( lbn, ifail )
   DALLOCATE(oddd)
   DALLOCATE(imag)
 
-  ;         bn%cmn           =lbn%cmn
+            bn%cmn           =lbn%cmn
   SALLOCATE(bn%cim,(1:bn%cmn),lbn%cim(1:bn%cmn))
   SALLOCATE(bn%cin,(1:bn%cmn),lbn%cin(1:bn%cmn))
   SALLOCATE(bn%Rcc,(1:bn%cmn),lbn%Rcc(1:bn%cmn))
@@ -6549,14 +6524,14 @@ subroutine bc00ab( rzmn, stz, Lderiv, dRpZ, sqrtg, ifail )
    
    select case( mi )
    case( 0   ) ;  rc = rzmn%Rbc(0,ii) +      Xbc(0)
-    ;          ;  rs = rzmn%Rbs(0,ii) +      Xbs(0)
-    ;          ;  zc = rzmn%Zbc(0,ii) +      Ybc(0)
-    ;          ;  zs = rzmn%Zbs(0,ii) +      Ybs(0)
+                  rs = rzmn%Rbs(0,ii) +      Xbs(0)
+                  zc = rzmn%Zbc(0,ii) +      Ybc(0)
+                  zs = rzmn%Zbs(0,ii) +      Ybs(0)
    case( 1:  ) ;  rm = lrho**mm
-    ;          ;  rc =                  rm * Xbc(0)
-    ;          ;  rs =                  rm * Xbs(0)
-    ;          ;  zc =                  rm * Ybc(0)
-    ;          ;  zs =                  rm * Ybs(0)
+                  rc =                  rm * Xbc(0)
+                  rs =                  rm * Xbs(0)
+                  zc =                  rm * Ybc(0)
+                  zs =                  rm * Ybs(0)
    end select
 
 ! can save Fourier harmonics into output; 22 Sep 15;
@@ -6569,18 +6544,18 @@ subroutine bc00ab( rzmn, stz, Lderiv, dRpZ, sqrtg, ifail )
    
    select case( mi )
    case( 0   ) ; drc =      Xbc(1) ! 22 Sep 15;
-    ;          ; drs =      Xbs(1)
-    ;          ; dzc =      Ybc(1)
-    ;          ; dzs =      Ybs(1)
+                 drs =      Xbs(1)
+                 dzc =      Ybc(1)
+                 dzs =      Ybs(1)
    case( 1   ) ; drc = rm * Xbc(1) +           oV * Xbc(0) ! 22 Sep 15;
-    ;          ; drs = rm * Xbs(1) +           oV * Xbs(0)
-    ;          ; dzc = rm * Ybc(1) +           oV * Ybc(0)
-    ;          ; dzs = rm * Ybs(1) +           oV * Ybs(0)
+                 drs = rm * Xbs(1) +           oV * Xbs(0)
+                 dzc = rm * Ybc(1) +           oV * Ybc(0)
+                 dzs = rm * Ybs(1) +           oV * Ybs(0)
    case( 2:  ) ; rn = lrho**(mm-1)
-    ;          ; drc = rm * Xbc(1) + mm * rn * oV * Xbc(0) ! 22 Sep 15;
-    ;          ; drs = rm * Xbs(1) + mm * rn * oV * Xbs(0)
-    ;          ; dzc = rm * Ybc(1) + mm * rn * oV * Ybc(0)
-    ;          ; dzs = rm * Ybs(1) + mm * rn * oV * Ybs(0)
+                 drc = rm * Xbc(1) + mm * rn * oV * Xbc(0) ! 22 Sep 15;
+                 drs = rm * Xbs(1) + mm * rn * oV * Xbs(0)
+                 dzc = rm * Ybc(1) + mm * rn * oV * Ybc(0)
+                 dzs = rm * Ybs(1) + mm * rn * oV * Ybs(0)
    end select                                                                                              
 
    dRpZ(1,1,0) = dRpZ(1,1,0) + ( + drc * carg + drs * sarg )
@@ -6597,22 +6572,22 @@ subroutine bc00ab( rzmn, stz, Lderiv, dRpZ, sqrtg, ifail )
    
    select case( mi )
    case( 0   ) ; ddrc =        Xbc(2) ! 22 Sep 15;
-    ;          ; ddrs =        Xbs(2)
-    ;          ; ddzc =        Ybc(2)
-    ;          ; ddzs =        Ybs(2)
+                 ddrs =        Xbs(2)
+                 ddzc =        Ybc(2)
+                 ddzs =        Ybs(2)
    case( 1   ) ; ddrc =   rm * Xbc(2) + 2           * oV * Xbc(1) ! 22 Sep 15;
-    ;          ; ddrs =   rm * Xbs(2) + 2           * oV * Xbs(1)
-    ;          ; ddzc =   rm * Ybc(2) + 2           * oV * Ybc(1)
-    ;          ; ddzs =   rm * Ybs(2) + 2           * oV * Ybs(1)
+                 ddrs =   rm * Xbs(2) + 2           * oV * Xbs(1)
+                 ddzc =   rm * Ybc(2) + 2           * oV * Ybc(1)
+                 ddzs =   rm * Ybs(2) + 2           * oV * Ybs(1)
    case( 2   ) ; ddrc =   rm * Xbc(2) + 2 * mm * rn * oV * Xbc(1) + mm *                 oV * oV * Xbc(0) ! 22 Sep 15;
-    ;          ; ddrs =   rm * Xbs(2) + 2 * mm * rn * oV * Xbs(1) + mm *                 oV * oV * Xbs(0)
-    ;          ; ddzc =   rm * Ybc(2) + 2 * mm * rn * oV * Ybc(1) + mm *                 oV * oV * Ybc(0)
-    ;          ; ddzs =   rm * Ybs(2) + 2 * mm * rn * oV * Ybs(1) + mm *                 oV * oV * Ybs(0)
+                 ddrs =   rm * Xbs(2) + 2 * mm * rn * oV * Xbs(1) + mm *                 oV * oV * Xbs(0)
+                 ddzc =   rm * Ybc(2) + 2 * mm * rn * oV * Ybc(1) + mm *                 oV * oV * Ybc(0)
+                 ddzs =   rm * Ybs(2) + 2 * mm * rn * oV * Ybs(1) + mm *                 oV * oV * Ybs(0)
    case( 3:  ) ; ro = lrho**(mm-2)
-    ;          ; ddrc =   rm * Xbc(2) + 2 * mm * rn * oV * Xbc(1) + mm * ( mm-1 ) * ro * oV * oV * Xbc(0) ! 22 Sep 15;
-    ;          ; ddrs =   rm * Xbs(2) + 2 * mm * rn * oV * Xbs(1) + mm * ( mm-1 ) * ro * oV * oV * Xbs(0)
-    ;          ; ddzc =   rm * Ybc(2) + 2 * mm * rn * oV * Ybc(1) + mm * ( mm-1 ) * ro * oV * oV * Ybc(0)
-    ;          ; ddzs =   rm * Ybs(2) + 2 * mm * rn * oV * Ybs(1) + mm * ( mm-1 ) * ro * oV * oV * Ybs(0)
+                 ddrc =   rm * Xbc(2) + 2 * mm * rn * oV * Xbc(1) + mm * ( mm-1 ) * ro * oV * oV * Xbc(0) ! 22 Sep 15;
+                 ddrs =   rm * Xbs(2) + 2 * mm * rn * oV * Xbs(1) + mm * ( mm-1 ) * ro * oV * oV * Xbs(0)
+                 ddzc =   rm * Ybc(2) + 2 * mm * rn * oV * Ybc(1) + mm * ( mm-1 ) * ro * oV * oV * Ybc(0)
+                 ddzs =   rm * Ybs(2) + 2 * mm * rn * oV * Ybs(1) + mm * ( mm-1 ) * ro * oV * oV * Ybs(0)
    end select                                                                                              
 
    dRpZ(1,1,1) = dRpZ(1,1,1) + ( + ddrc * carg + ddrs * sarg )
@@ -6922,14 +6897,14 @@ end subroutine bc00ab
         
         select case( mi )
         case( 0   ) ;  rc = lrzmn%Rbc(0,ii) +      Xbc(0,ii)
-         ;          ;  rs = lrzmn%Rbs(0,ii) +      Xbs(0,ii)
-         ;          ;  zc = lrzmn%Zbc(0,ii) +      Ybc(0,ii)
-         ;          ;  zs = lrzmn%Zbs(0,ii) +      Ybs(0,ii)
+                       rs = lrzmn%Rbs(0,ii) +      Xbs(0,ii)
+                       zc = lrzmn%Zbc(0,ii) +      Ybc(0,ii)
+                       zs = lrzmn%Zbs(0,ii) +      Ybs(0,ii)
         case( 1:  ) ;  rm = lrho**mm
-         ;          ;  rc =                   rm * Xbc(0,ii)
-         ;          ;  rs =                   rm * Xbs(0,ii)
-         ;          ;  zc =                   rm * Ybc(0,ii)
-         ;          ;  zs =                   rm * Ybs(0,ii)
+                       rc =                   rm * Xbc(0,ii)
+                       rs =                   rm * Xbs(0,ii)
+                       zc =                   rm * Ybc(0,ii)
+                       zs =                   rm * Ybs(0,ii)
         end select
         
         Roij(jk,0) = Roij(jk,0) + ( +  rc * carg(jk,ii) +  rs * sarg(jk,ii) )
@@ -6937,18 +6912,18 @@ end subroutine bc00ab
         
         select case( mi )
         case( 0   ) ; drc =      Xbc(1,ii)
-         ;          ; drs =      Xbs(1,ii)
-         ;          ; dzc =      Ybc(1,ii)
-         ;          ; dzs =      Ybs(1,ii)
+                      drs =      Xbs(1,ii)
+                      dzc =      Ybc(1,ii)
+                      dzs =      Ybs(1,ii)
         case( 1   ) ; drc = rm * Xbc(1,ii) +           oV * Xbc(0,ii)
-         ;          ; drs = rm * Xbs(1,ii) +           oV * Xbs(0,ii)
-         ;          ; dzc = rm * Ybc(1,ii) +           oV * Ybc(0,ii)
-         ;          ; dzs = rm * Ybs(1,ii) +           oV * Ybs(0,ii)
+                      drs = rm * Xbs(1,ii) +           oV * Xbs(0,ii)
+                      dzc = rm * Ybc(1,ii) +           oV * Ybc(0,ii)
+                      dzs = rm * Ybs(1,ii) +           oV * Ybs(0,ii)
         case( 2:  ) ; rn = lrho**(mm-1)
-         ;          ; drc = rm * Xbc(1,ii) + mm * rn * oV * Xbc(0,ii)
-         ;          ; drs = rm * Xbs(1,ii) + mm * rn * oV * Xbs(0,ii)
-         ;          ; dzc = rm * Ybc(1,ii) + mm * rn * oV * Ybc(0,ii)
-         ;          ; dzs = rm * Ybs(1,ii) + mm * rn * oV * Ybs(0,ii)
+                      drc = rm * Xbc(1,ii) + mm * rn * oV * Xbc(0,ii)
+                      drs = rm * Xbs(1,ii) + mm * rn * oV * Xbs(0,ii)
+                      dzc = rm * Ybc(1,ii) + mm * rn * oV * Ybc(0,ii)
+                      dzs = rm * Ybs(1,ii) + mm * rn * oV * Ybs(0,ii)
         end select
         
         Roij(jk,1) = Roij(jk,1) + ( + drc * carg(jk,ii) + drs * sarg(jk,ii) )
@@ -7545,15 +7520,15 @@ end subroutine bc00ab
      teta = iteta * angle / lqfms%Np ! for iteta = 0 value of angle is irrelevant; angle will be calculated below; 14 Aug 13;
      
      if( lqfms%Lrestart.eq.1 ) then ! an initial guess is provided; 14 Aug 13;
-      ;            ; xx(1:2) = (/ lqfms%r(izeta,iteta), lqfms%n(iteta) + qfms%offset /)    
+                     xx(1:2) = (/ lqfms%r(izeta,iteta), lqfms%n(iteta) + qfms%offset /)    
      else ! obtain initial guess by extrapolation; 14 Aug 13;
       select case( iteta ) ! extrapolation; 31 Jul 13;
       case( 0  )   ; xx(1  ) =                     lqfms%rr 
-       ;           ; xx(  2) =                     lqfms%nu                         + qfms%offset
+                     xx(  2) =                     lqfms%nu                         + qfms%offset
       case( 1  )   ; xx(1  ) = sum( (/     +1 /) * lqfms%r(izeta,iteta-1:iteta-1) )
-       ;           ; xx(  2) = sum( (/     +1 /) * lqfms%n(      iteta-1:iteta-1) ) + qfms%offset
+                     xx(  2) = sum( (/     +1 /) * lqfms%n(      iteta-1:iteta-1) ) + qfms%offset
       case( 2: )   ; xx(1  ) = sum( (/ -1, +2 /) * lqfms%r(izeta,iteta-2:iteta-1) )
-       ;           ; xx(  2) = sum( (/ -1, +2 /) * lqfms%n(      iteta-2:iteta-1) ) + qfms%offset
+                     xx(  2) = sum( (/ -1, +2 /) * lqfms%n(      iteta-2:iteta-1) ) + qfms%offset
       end select
      endif ! end of if( lrestart ) ;
      
@@ -7586,7 +7561,7 @@ end subroutine bc00ab
      ic05xbf = 1 ! NAG; 13 Oct 15;
      call C05PBF( qf00ab, Ndof, xx(1:Ndof), ff(1:Ndof), df(1:Ldfjac,1:Ndof), Ldfjac, tol, rwork(1:Lrwork), Lrwork, ic05xbf )
 #else 
-     call HYBRJ1( qf00ab, Ndof, xx(1:Ndof), ff(1:Ndof), df(1:Ldfjac,1:Ndof), Ldfjac, tol, ic05xbf, rwork(1:Lrwork), Lrwork )
+     call HYBRJ1( qf00ab, Ndof, xx(1:Ndof), ff(1:Ndof), df(1:Ldfjac,1:Ndof), Ldfjac, tol, ic05xbf )
      if (ic05xbf==1) ic05xbf=0 ! because the MINPACK error code is stupid
 #endif
      
@@ -7902,8 +7877,7 @@ subroutine qf00ab( Ndof, xx, ff, df, Ldfjac, iflag )
   iwork=0
 ! istate=1 :  indicates the first lsode call
   istate=1
-! itask=4 :  normal integration with limited over-shoot (set by
-!            rwork(1) in the i_lsode loop
+! itask=1 :  integrate until end point is passed and interpolate to it
   itask=1
 ! iopt=1 :  optional inputs are used
   iopt=1
@@ -7939,9 +7913,9 @@ subroutine qf00ab( Ndof, xx, ff, df, Ldfjac, iflag )
   
   select case( iflag )
   case( 1 )    ; niter(0) = niter(0)+1 ; ff(1  ) = rt(1) -   xx(1)
-   ;           ;                       ; ff(2  ) = rt(2) - ( teta + qfms%pp * (pi2/Nfp) )
+                                         ff(2  ) = rt(2) - ( teta + qfms%pp * (pi2/Nfp) )
   case( 2 )    ; niter(1) = niter(1)+1 ; df(1,1) = rt(3) -   one ; df(1,2) = rt(4)
-   ;           ;                       ; df(2,1) = rt(5)         ; df(2,2) = rt(6)
+                                         df(2,1) = rt(5)         ; df(2,2) = rt(6)
   end select
 
   lxx(1:Ndof) = xx(1:Ndof) ; lff(1:Ndof) = ff(1:Ndof)
@@ -7982,7 +7956,7 @@ subroutine qf00ac( zeta, rt ) ! saves information along pseudo-surf into surf st
 !  endif
   
   if( izeta.le.qfms%qNd ) then ; qfms%r(izeta,iteta) = rt(1)
-   ;                           ; qfms%t(izeta,iteta) = rt(2)
+                                 qfms%t(izeta,iteta) = rt(2)
   endif
   
   izeta = izeta + 1 ; zeta = izeta * (pi2/qfms%Nfp) / qfms%Nd
@@ -8021,7 +7995,7 @@ subroutine nr00aa( NN, xx, dy, yn, wk ) ! numerical recipes in fortran: spline; 
   qn = half
   un = ( three / (xx(NN)-xx(NN-1)) ) * ( dy(NN,1) - (dy(NN,0)-dy(NN-1,0)) / (xx(NN)-xx(NN-1)) )
   
-  ;                   ; dy(NN,2) = ( un - qn * wk(NN-1) ) / ( qn * dy(NN-1,2) + one )
+                        dy(NN,2) = ( un - qn * wk(NN-1) ) / ( qn * dy(NN-1,2) + one )
   do ii = NN-1, 1, -1 ; dy(ii,2) = dy(ii,2) * dy(ii+1,2) + wk(ii)
   enddo
   
@@ -8036,7 +8010,7 @@ subroutine nr00aa( NN, xx, dy, yn, wk ) ! numerical recipes in fortran: spline; 
    yn(ii,2)=(dy(ii+1,2)*hh+dy(ii,2)*xx(ii+1)-dy(ii+1,2)*xx(ii+1))/(2*hh)
    yn(ii,3)=(-dy(ii,2)+dy(ii+1,2))/(6*hh)
 
-   ;                    ; dy(ii+1,-1) = dy(ii  ,-1)
+                          dy(ii+1,-1) = dy(ii  ,-1)
    do jj = 0, 3
     exponent = jj + one ; dy(ii+1,-1) = dy(ii+1,-1) + yn(ii,jj) * ( xx(ii+1)**exponent -xx(ii)**exponent ) / exponent
    enddo
